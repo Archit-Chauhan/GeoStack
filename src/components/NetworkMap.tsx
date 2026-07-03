@@ -1,10 +1,10 @@
 import { useEffect, useMemo } from 'react';
-import { MapContainer, Marker, Popup, TileLayer, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, Marker, Popup, TileLayer, Polyline, Tooltip, useMap } from 'react-leaflet';
 import L, { type LatLngExpression, type LatLngBoundsExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useAppSelector } from '@/app/hooks';
 import { refName } from '@/lib/entity';
-import type { Store, Warehouse } from '@/types';
+import type { Store, Warehouse, TransferStatus } from '@/types';
 
 export interface MapNode {
   id: string;
@@ -16,6 +16,17 @@ export interface MapNode {
   manager?: string;
   meta?: string;
   raw: Warehouse | Store;
+}
+
+/** An active transfer resolved to source/destination coordinates for drawing. */
+export interface TransferRoute {
+  id: string;
+  code: string;
+  status: TransferStatus;
+  fromName: string;
+  toName: string;
+  from: [number, number];
+  to: [number, number];
 }
 
 const TILES = {
@@ -31,6 +42,13 @@ const TILES = {
   },
 };
 
+// Per-status styling for active transfer routes.
+const ROUTE_STYLE: Record<string, { color: string; weight: number; dashArray?: string }> = {
+  in_transit: { color: '#0ecb81', weight: 3.5 },
+  dispatched: { color: '#fcd535', weight: 2.5, dashArray: '8 7' },
+  delivered: { color: '#38bdf8', weight: 2, dashArray: '2 7' },
+};
+
 function markerIcon(kind: MapNode['kind']) {
   return L.divIcon({
     className: '',
@@ -39,6 +57,20 @@ function markerIcon(kind: MapNode['kind']) {
     iconAnchor: [8, 8],
   });
 }
+
+function truckIcon(color: string) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="background:${color};color:#04150e;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;box-shadow:0 0 0 4px ${color}33">&#9654;</div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
+}
+
+const midpoint = (a: [number, number], b: [number, number]): [number, number] => [
+  (a[0] + b[0]) / 2,
+  (a[1] + b[1]) / 2,
+];
 
 /** Convert a warehouse to a map node. */
 export function warehouseNode(w: Warehouse): MapNode {
@@ -89,11 +121,12 @@ export interface NetworkMapProps {
   nodes: MapNode[];
   height?: number | string;
   route?: { from?: MapNode; to?: MapNode };
+  transfers?: TransferRoute[];
   onSelect?: (node: MapNode) => void;
   selectedId?: string;
 }
 
-export function NetworkMap({ nodes, height = 380, route, onSelect, selectedId }: NetworkMapProps) {
+export function NetworkMap({ nodes, height = 380, route, transfers = [], onSelect, selectedId }: NetworkMapProps) {
   const theme = useAppSelector((s) => s.ui.theme);
   const tiles = theme === 'light' ? TILES.light : TILES.dark;
 
@@ -124,11 +157,38 @@ export function NetworkMap({ nodes, height = 380, route, onSelect, selectedId }:
       <TileLayer key={theme} url={tiles.url} attribution={tiles.attribution} subdomains="abcd" />
       <FitBounds nodes={nodes} />
 
+      {/* Active transfers (dispatched / in_transit / delivered) */}
+      {transfers.map((t) => {
+        const style = ROUTE_STYLE[t.status] ?? ROUTE_STYLE.dispatched;
+        return (
+          <Polyline key={t.id} positions={[t.from, t.to]} pathOptions={style}>
+            <Tooltip sticky>
+              {t.code} · {t.status.replace('_', ' ')} — {t.fromName} → {t.toName}
+            </Tooltip>
+          </Polyline>
+        );
+      })}
+      {/* A truck marker at the midpoint of every in-transit shipment */}
+      {transfers
+        .filter((t) => t.status === 'in_transit')
+        .map((t) => (
+          <Marker key={`truck-${t.id}`} position={midpoint(t.from, t.to)} icon={truckIcon('#0ecb81')}>
+            <Popup>
+              <div className="map-pop">
+                <h4>{t.code}</h4>
+                <div className="sub">In transit</div>
+                <div className="kv">
+                  <span className="mute">Route</span>
+                  <span>{t.fromName} → {t.toName}</span>
+                </div>
+              </div>
+            </Popup>
+          </Marker>
+        ))}
+
+      {/* Manually-planned route from the source/destination pickers */}
       {routeLine ? (
-        <Polyline
-          positions={routeLine}
-          pathOptions={{ color: '#0ecb81', weight: 2.5, dashArray: '7 6' }}
-        />
+        <Polyline positions={routeLine} pathOptions={{ color: '#eaecef', weight: 2, dashArray: '4 6' }} />
       ) : null}
 
       {nodes

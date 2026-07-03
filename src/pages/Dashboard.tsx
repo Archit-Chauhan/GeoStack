@@ -9,7 +9,7 @@ import { useTransfers } from '@/features/transfers/useTransfers';
 import { useInventory } from '@/features/inventory/useInventory';
 import { StatCard } from '@/components/StatCard';
 import { TransferPipeline } from '@/components/TransferPipeline';
-import { NetworkMap, storeNode, warehouseNode } from '@/components/NetworkMap';
+import { NetworkMap, storeNode, warehouseNode, type TransferRoute } from '@/components/NetworkMap';
 import { ThroughputChart } from '@/components/charts/ThroughputChart';
 import { CategoryDonut } from '@/components/charts/CategoryDonut';
 import { CreateTransferModal } from '@/components/transfers/CreateTransferModal';
@@ -46,6 +46,27 @@ export default function Dashboard() {
     const s = (stores.data?.items ?? []).map(storeNode);
     return [...w, ...s];
   }, [warehouses.data, stores.data]);
+
+  const transferRoutes = useMemo<TransferRoute[]>(() => {
+    const list = transfers.data?.items ?? [];
+    return list
+      .filter((t) => t.status === 'dispatched' || t.status === 'in_transit' || t.status === 'delivered')
+      .map((t) => {
+        const f = nodes.find((n) => n.id === eid(t.from));
+        const d = nodes.find((n) => n.id === eid(t.to));
+        if (!f || !d) return null;
+        return {
+          id: t._id ?? t.id,
+          code: t.code,
+          status: t.status,
+          fromName: f.name,
+          toName: d.name,
+          from: [f.lat, f.lng] as [number, number],
+          to: [d.lat, d.lng] as [number, number],
+        };
+      })
+      .filter((r): r is TransferRoute => r !== null);
+  }, [transfers.data, nodes]);
 
   const inTransit = (transfers.data?.items ?? []).filter((t) => t.status === 'in_transit').length;
   const kpi = overview.data;
@@ -151,7 +172,7 @@ export default function Dashboard() {
               <EmptyState title="No locations yet" message="Add a warehouse or store to see it on the map." />
             </div>
           ) : (
-            <NetworkMap nodes={nodes} height={380} />
+            <NetworkMap nodes={nodes} height={380} transfers={transferRoutes} />
           )}
           <div className="map-legend">
             <span className="li"><span className="sw" style={{ background: 'var(--primary)' }} /> Warehouse</span>

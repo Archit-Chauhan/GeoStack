@@ -2,18 +2,28 @@ import { useMemo, useState } from 'react';
 import { MapPin, ArrowRight } from 'lucide-react';
 import { useWarehouses, useWarehouseSummary } from '@/features/warehouses/useWarehouses';
 import { useStores, useStoreSummary } from '@/features/stores/useStores';
+import { useTransfers } from '@/features/transfers/useTransfers';
 import { usePermissions } from '@/app/hooks';
-import { NetworkMap, storeNode, warehouseNode, type MapNode } from '@/components/NetworkMap';
+import { NetworkMap, storeNode, warehouseNode, type MapNode, type TransferRoute } from '@/components/NetworkMap';
 import { CreateTransferModal } from '@/components/transfers/CreateTransferModal';
 import { Card, Button, Select, Skeleton, EmptyState, Pill } from '@/components/ui';
 import { Can } from '@/routes/PermissionGate';
 import { formatCurrency, formatNumber } from '@/lib/format';
-import type { LocationType } from '@/types';
+import type { LocationType, TransferStatus } from '@/types';
+
+const ACTIVE_TRANSFER: TransferStatus[] = ['dispatched', 'in_transit', 'delivered'];
+const refId = (x: unknown): string => {
+  if (!x) return '';
+  if (typeof x === 'string') return x;
+  const o = x as { _id?: string; id?: string };
+  return o._id ?? o.id ?? '';
+};
 
 export default function MapPage() {
   const { isReadOnly } = usePermissions();
   const warehouses = useWarehouses({ limit: 200 });
   const stores = useStores({ limit: 200 });
+  const transfersQ = useTransfers({ limit: 200 });
 
   const [selected, setSelected] = useState<MapNode | null>(null);
   const [from, setFrom] = useState('');
@@ -29,7 +39,31 @@ export default function MapPage() {
   const nodeById = (id: string) => nodes.find((n) => n.id === id);
   const route = { from: from ? nodeById(from) : undefined, to: to ? nodeById(to) : undefined };
 
+  // Active transfers (dispatched / in transit / delivered) resolved to map routes.
+  const transferRoutes = useMemo<TransferRoute[]>(() => {
+    const list = transfersQ.data?.items ?? [];
+    return list
+      .filter((t) => ACTIVE_TRANSFER.includes(t.status))
+      .map((t) => {
+        const f = nodeById(refId(t.from));
+        const d = nodeById(refId(t.to));
+        if (!f || !d) return null;
+        return {
+          id: t._id ?? t.id,
+          code: t.code,
+          status: t.status,
+          fromName: f.name,
+          toName: d.name,
+          from: [f.lat, f.lng] as [number, number],
+          to: [d.lat, d.lng] as [number, number],
+        };
+      })
+      .filter((r): r is TransferRoute => r !== null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transfersQ.data, nodes]);
+
   const loading = warehouses.isLoading || stores.isLoading;
+  const activeCount = transferRoutes.length;
 
   const transferDefaults = useMemo(() => {
     const f = from ? nodeById(from) : undefined;
@@ -97,6 +131,7 @@ export default function MapPage() {
               nodes={nodes}
               height={520}
               route={route}
+              transfers={transferRoutes}
               onSelect={setSelected}
               selectedId={selected?.id}
             />
@@ -107,6 +142,12 @@ export default function MapPage() {
             <span className="li"><span className="sw" style={{ background: 'var(--up)' }} /> Distribution hub</span>
             <span className="li"><span className="sw" style={{ background: 'var(--info)' }} /> Cold storage</span>
             <span className="li"><span className="sw" style={{ background: '#eaecef' }} /> Store</span>
+            <span className="li"><span className="sw" style={{ background: 'var(--up)', width: 18, height: 3, borderRadius: 2 }} /> In-transit route</span>
+            {activeCount > 0 && (
+              <span className="li mute" style={{ marginLeft: 'auto' }}>
+                {activeCount} shipment{activeCount > 1 ? 's' : ''} in motion
+              </span>
+            )}
           </div>
         </Card>
 
